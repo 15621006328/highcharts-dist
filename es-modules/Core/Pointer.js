@@ -12,6 +12,7 @@ import Color from './Color/Color.js';
 var color = Color.parse;
 import H from './Globals.js';
 var charts = H.charts, noop = H.noop;
+import palette from '../Core/Color/Palette.js';
 import Tooltip from './Tooltip.js';
 import U from './Utilities.js';
 var addEvent = U.addEvent, attr = U.attr, css = U.css, defined = U.defined, extend = U.extend, find = U.find, fireEvent = U.fireEvent, isNumber = U.isNumber, isObject = U.isObject, objectEach = U.objectEach, offset = U.offset, pick = U.pick, splat = U.splat;
@@ -211,10 +212,6 @@ var Pointer = /** @class */ (function () {
      *
      * @private
      * @function Highcharts.Pointer#drag
-     *
-     * @param {Highcharts.PointerEventObject} e
-     *
-     * @return {void}
      */
     Pointer.prototype.drag = function (e) {
         var chart = this.chart, chartOptions = chart.options.chart, chartX = e.chartX, chartY = e.chartY, zoomHor = this.zoomHor, zoomVert = this.zoomVert, plotLeft = chart.plotLeft, plotTop = chart.plotTop, plotWidth = chart.plotWidth, plotHeight = chart.plotHeight, clickedInside, size, selectionMarker = this.selectionMarker, mouseDownX = (this.mouseDownX || 0), mouseDownY = (this.mouseDownY || 0), panningEnabled = isObject(chartOptions.panning) ?
@@ -261,7 +258,7 @@ var Pointer = /** @class */ (function () {
                     if (!chart.styledMode) {
                         selectionMarker.attr({
                             fill: (chartOptions.selectionMarkerFill ||
-                                color('#335cad')
+                                color(palette.highlightColor80)
                                     .setOpacity(0.25).get())
                         });
                     }
@@ -296,10 +293,6 @@ var Pointer = /** @class */ (function () {
      *
      * @private
      * @function Highcharts.Pointer#dragStart
-     *
-     * @param {Highcharts.PointerEventObject} e
-     *
-     * @return {void}
      */
     Pointer.prototype.dragStart = function (e) {
         var chart = this.chart;
@@ -446,7 +439,7 @@ var Pointer = /** @class */ (function () {
             var noSharedTooltip = s.noSharedTooltip && shared, compareX = (!noSharedTooltip &&
                 s.options.findNearestPointBy.indexOf('y') < 0), point = s.searchPoint(e, compareX);
             if ( // Check that we actually found a point on the series.
-            isObject(point, true) &&
+            isObject(point, true) && point.series &&
                 // Use the new point if it is closer.
                 (!isObject(closest, true) ||
                     (sort(closest, point) > 0))) {
@@ -633,10 +626,6 @@ var Pointer = /** @class */ (function () {
     /**
      * @private
      * @function Highcharts.Pointer#onTrackerMouseOut
-     *
-     * @param {Highcharts.PointerEventObject} e
-     *
-     * @return {void}
      */
     Pointer.prototype.onTrackerMouseOut = function (e) {
         var chart = this.chart;
@@ -885,7 +874,7 @@ var Pointer = /** @class */ (function () {
         if (!pEvt.preventDefault) {
             pEvt.returnValue = false;
         }
-        if (chart.mouseIsDown === 'mousedown') {
+        if (chart.mouseIsDown === 'mousedown' || this.touchSelect(pEvt)) {
             this.drag(pEvt);
         }
         // Show the tooltip and run mouse over events (#977)
@@ -917,7 +906,12 @@ var Pointer = /** @class */ (function () {
      * @return {void}
      */
     Pointer.prototype.onContainerTouchMove = function (e) {
-        this.touch(e);
+        if (this.touchSelect(e)) {
+            this.onContainerMouseMove(e);
+        }
+        else {
+            this.touch(e);
+        }
     };
     /**
      * @private
@@ -928,8 +922,13 @@ var Pointer = /** @class */ (function () {
      * @return {void}
      */
     Pointer.prototype.onContainerTouchStart = function (e) {
-        this.zoomOption(e);
-        this.touch(e, true);
+        if (this.touchSelect(e)) {
+            this.onContainerMouseDown(e);
+        }
+        else {
+            this.zoomOption(e);
+            this.touch(e, true);
+        }
     };
     /**
      * Special handler for mouse move that will hide the tooltip when the mouse
@@ -1245,12 +1244,6 @@ var Pointer = /** @class */ (function () {
      * @private
      * @function Highcharts.Pointer#runPointActions
      *
-     * @param {global.Event} e
-     *
-     * @param {Highcharts.PointerEventObject} [p]
-     *
-     * @return {void}
-     *
      * @fires Highcharts.Point#event:mouseOut
      * @fires Highcharts.Point#event:mouseOver
      */
@@ -1368,12 +1361,6 @@ var Pointer = /** @class */ (function () {
      *
      * @private
      * @function Highcharts.Pointer#scaleGroups
-     *
-     * @param {Highcharts.SeriesPlotBoxObject} [attribs]
-     *
-     * @param {boolean} [clip]
-     *
-     * @return {void}
      */
     Pointer.prototype.scaleGroups = function (attribs, clip) {
         var chart = this.chart, seriesAttribs;
@@ -1402,10 +1389,9 @@ var Pointer = /** @class */ (function () {
      *
      * @private
      * @function Highcharts.Pointer#setDOMEvents
-     *
-     * @return {void}
      */
     Pointer.prototype.setDOMEvents = function () {
+        var _this = this;
         var container = this.chart.container, ownerDoc = container.ownerDocument;
         container.onmousedown = this.onContainerMouseDown.bind(this);
         container.onmousemove = this.onContainerMouseMove.bind(this);
@@ -1415,11 +1401,20 @@ var Pointer = /** @class */ (function () {
         if (!H.unbindDocumentMouseUp) {
             H.unbindDocumentMouseUp = addEvent(ownerDoc, 'mouseup', this.onDocumentMouseUp.bind(this));
         }
+        // In case we are dealing with overflow, reset the chart position when
+        // scrolling parent elements
+        var parent = this.chart.renderTo.parentElement;
+        while (parent && parent.tagName !== 'BODY') {
+            addEvent(parent, 'scroll', function () {
+                delete _this.chartPosition;
+            });
+            parent = parent.parentElement;
+        }
         if (H.hasTouch) {
-            addEvent(container, 'touchstart', this.onContainerTouchStart.bind(this));
-            addEvent(container, 'touchmove', this.onContainerTouchMove.bind(this));
+            addEvent(container, 'touchstart', this.onContainerTouchStart.bind(this), { passive: false });
+            addEvent(container, 'touchmove', this.onContainerTouchMove.bind(this), { passive: false });
             if (!H.unbindDocumentTouchEnd) {
-                H.unbindDocumentTouchEnd = addEvent(ownerDoc, 'touchend', this.onDocumentTouchEnd.bind(this));
+                H.unbindDocumentTouchEnd = addEvent(ownerDoc, 'touchend', this.onDocumentTouchEnd.bind(this), { passive: false });
             }
         }
     };
@@ -1447,12 +1442,6 @@ var Pointer = /** @class */ (function () {
      *
      * @private
      * @function Highcharts.Pointer#touch
-     *
-     * @param {Highcharts.PointerEventObject} e
-     *
-     * @param {boolean} [start]
-     *
-     * @return {void}
      */
     Pointer.prototype.touch = function (e, start) {
         var chart = this.chart, hasMoved, pinchDown, isInside;
@@ -1489,6 +1478,17 @@ var Pointer = /** @class */ (function () {
         else if (e.touches.length === 2) {
             this.pinch(e);
         }
+    };
+    /**
+     * Returns true if the chart is set up for zooming by single touch and the
+     * event is capable
+     * @param {PointEvent} e
+     *        Event object
+     */
+    Pointer.prototype.touchSelect = function (e) {
+        return Boolean(this.chart.options.chart.zoomBySingleTouch &&
+            e.touches &&
+            e.touches.length === 1);
     };
     /**
      * Resolve the zoomType option, this is reset on all touch start and mouse

@@ -15,11 +15,12 @@ import A from '../Core/Animation/AnimationUtilities.js';
 var animObject = A.animObject;
 import Chart from '../Core/Chart/Chart.js';
 import H from '../Core/Globals.js';
+import LineSeries from '../Series/Line/LineSeries.js';
 import Point from '../Core/Series/Point.js';
 import SVGRenderer from '../Core/Renderer/SVG/SVGRenderer.js';
 import U from '../Core/Utilities.js';
 var addEvent = U.addEvent, erase = U.erase, getOptions = U.getOptions, merge = U.merge, pick = U.pick, removeEvent = U.removeEvent, wrap = U.wrap;
-import '../Series/LineSeries.js';
+import '../Series/Line/LineSeries.js';
 /**
  * Pattern options
  *
@@ -129,7 +130,7 @@ import '../Series/LineSeries.js';
 */
 ''; // detach doclets above
 // Add the predefined patterns
-var patterns = (function () {
+var patterns = H.patterns = (function () {
     var patterns = [], colors = getOptions().colors;
     [
         'M 0 0 L 10 10 M 9 -1 L 11 1 M -1 9 L 1 11',
@@ -366,7 +367,7 @@ SVGRenderer.prototype.addPattern = function (options, animation) {
     return pattern;
 };
 // Make sure we have a series color
-wrap(H.Series.prototype, 'getColor', function (proceed) {
+wrap(LineSeries.prototype, 'getColor', function (proceed) {
     var oldColor = this.options.color;
     // Temporarely remove color options to get defaults
     if (oldColor &&
@@ -386,7 +387,7 @@ wrap(H.Series.prototype, 'getColor', function (proceed) {
     }
 });
 // Calculate pattern dimensions on points that have their own pattern.
-addEvent(H.Series, 'render', function () {
+addEvent(LineSeries, 'render', function () {
     var isResizing = this.chart.isResizing;
     if (this.isDirtyData || isResizing || !this.chart.hasRendered) {
         (this.points || []).forEach(function (point) {

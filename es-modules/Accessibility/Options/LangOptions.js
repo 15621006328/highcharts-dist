@@ -125,7 +125,7 @@ var langOptions = {
         rangeSelector: {
             minInputLabel: 'Select start date.',
             maxInputLabel: 'Select end date.',
-            buttonText: 'Select range {buttonText}'
+            clickButtonAnnouncement: 'Viewing {axisRangeDescription}'
         },
         /**
          * Accessibility language options for the data table.

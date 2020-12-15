@@ -9,6 +9,7 @@
  * */
 'use strict';
 import H from './Globals.js';
+var charts = H.charts, doc = H.doc, win = H.win;
 /**
  * An animation configuration. Animation configurations can also be defined as
  * booleans, where `false` turns off animation and `true` defaults to a duration
@@ -216,6 +217,12 @@ import H from './Globals.js';
 * added.
 * @name Highcharts.EventOptionsObject#order
 * @type {number}
+*/ /**
+* Whether an event should be passive or not.
+* When set to `true`, the function specified by listener will never call
+* `preventDefault()`.
+* @name Highcharts.EventOptionsObject#passive
+* @type boolean
 */
 /**
  * Formats data as a string. Usually the data is accessible throught the `this`
@@ -324,7 +331,6 @@ import H from './Globals.js';
  * @namespace Highcharts
  */
 H.timers = [];
-var charts = H.charts, doc = H.doc, win = H.win;
 /**
  * Provide error messages for debugging, with links to online explanation. This
  * function can be overridden to provide custom error handling.
@@ -484,6 +490,33 @@ H.merge = merge;
  */
 function clamp(value, min, max) {
     return value > min ? value < max ? value : max : min;
+}
+// eslint-disable-next-line valid-jsdoc
+/**
+ * Remove settings that have not changed, to avoid unnecessary rendering or
+ * computing (#9197).
+ * @private
+ */
+function cleanRecursively(newer, older) {
+    var result = {};
+    objectEach(newer, function (_val, key) {
+        var ob;
+        // Dive into objects (except DOM nodes)
+        if (isObject(newer[key], true) &&
+            !newer.nodeType && // #10044
+            older[key]) {
+            ob = cleanRecursively(newer[key], older[key]);
+            if (Object.keys(ob).length) {
+                result[key] = ob;
+            }
+            // Arrays, primitives and DOM nodes are copied directly
+        }
+        else if (isObject(newer[key]) ||
+            newer[key] !== older[key]) {
+            result[key] = newer[key];
+        }
+    });
+    return result;
 }
 /**
  * Shortcut for parseInt
@@ -1281,7 +1314,7 @@ var timeUnits = H.timeUnits = {
 var numberFormat = H.numberFormat = function numberFormat(number, decimals, decimalPoint, thousandsSep) {
     number = +number || 0;
     decimals = +decimals;
-    var lang = H.defaultOptions.lang, origDec = (number.toString().split('.')[1] || '').split('e')[0].length, strinteger, thousands, ret, roundedNumber, exponent = number.toString().split('e'), fractionDigits;
+    var lang = H.defaultOptions.lang, origDec = (number.toString().split('.')[1] || '').split('e')[0].length, strinteger, thousands, ret, roundedNumber, exponent = number.toString().split('e'), fractionDigits, firstDecimals = decimals;
     if (decimals === -1) {
         // Preserve decimals. Not huge numbers (#3793).
         decimals = Math.min(origDec, 20);
@@ -1329,10 +1362,15 @@ var numberFormat = H.numberFormat = function numberFormat(number, decimals, deci
     // Add the leftover after grouping into thousands. For example, in the
     // number 42 000 000, this line adds 42.
     ret += thousands ? strinteger.substr(0, thousands) + thousandsSep : '';
-    // Add the remaining thousands groups, joined by the thousands separator
-    ret += strinteger
-        .substr(thousands)
-        .replace(/(\d{3})(?=\d)/g, '$1' + thousandsSep);
+    if (+exponent[1] < 0 && !firstDecimals) {
+        ret = '0';
+    }
+    else {
+        // Add the remaining thousands groups, joined by the thousands separator
+        ret += strinteger
+            .substr(thousands)
+            .replace(/(\d{3})(?=\d)/g, '$1' + thousandsSep);
+    }
     // Add the decimal point and the decimal component
     if (decimals) {
         // Get the decimal component
@@ -1698,29 +1736,35 @@ objectEach({
  *         A callback function to remove the added event.
  */
 var addEvent = H.addEvent = function (el, type, fn, options) {
-    if (options === void 0) { options = {}; }
     /* eslint-enable valid-jsdoc */
-    var events, addEventListener = (el.addEventListener || H.addEventListenerPolyfill);
-    // If we're setting events directly on the constructor, use a separate
-    // collection, `protoEvents` to distinguish it from the item events in
-    // `hcEvents`.
-    if (typeof el === 'function' && el.prototype) {
-        events = el.prototype.protoEvents = el.prototype.protoEvents || {};
+    if (options === void 0) { options = {}; }
+    // Add hcEvents to either the prototype (in case we're running addEvent on a
+    // class) or the instance. If hasOwnProperty('hcEvents') is false, it is
+    // inherited down the prototype chain, in which case we need to set the
+    // property on this instance (which may itself be a prototype).
+    var owner = typeof el === 'function' && el.prototype || el;
+    if (!Object.hasOwnProperty.call(owner, 'hcEvents')) {
+        owner.hcEvents = {};
     }
-    else {
-        events = el.hcEvents = el.hcEvents || {};
-    }
+    var events = owner.hcEvents;
     // Allow click events added to points, otherwise they will be prevented by
     // the TouchPointer.pinch function after a pinch zoom operation (#7091).
-    if (H.Point &&
+    if (H.Point && // without H a dependency loop occurs
         el instanceof H.Point &&
         el.series &&
         el.series.chart) {
         el.series.chart.runTrackerClick = true;
     }
     // Handle DOM events
+    // If the browser supports passive events, add it to improve performance
+    // on touch events (#11353).
+    var addEventListener = (el.addEventListener || H.addEventListenerPolyfill);
     if (addEventListener) {
-        addEventListener.call(el, type, fn, false);
+        addEventListener.call(el, type, fn, H.supportsPassiveEvents ? {
+            passive: options.passive === void 0 ?
+                type.indexOf('touch') !== -1 : options.passive,
+            capture: false
+        } : false);
     }
     if (!events[type]) {
         events[type] = [];
@@ -1731,9 +1775,7 @@ var addEvent = H.addEvent = function (el, type, fn, options) {
     };
     events[type].push(eventObject);
     // Order the calls
-    events[type].sort(function (a, b) {
-        return a.order - b.order;
-    });
+    events[type].sort(function (a, b) { return a.order - b.order; });
     // Return a function that can be called to remove this event.
     return function () {
         removeEvent(el, type, fn);
@@ -1760,7 +1802,6 @@ var addEvent = H.addEvent = function (el, type, fn, options) {
  */
 var removeEvent = H.removeEvent = function removeEvent(el, type, fn) {
     /* eslint-enable valid-jsdoc */
-    var events;
     /**
      * @private
      * @param {string} type - event type
@@ -1799,29 +1840,27 @@ var removeEvent = H.removeEvent = function removeEvent(el, type, fn) {
             }
         });
     }
-    ['protoEvents', 'hcEvents'].forEach(function (coll, i) {
-        var eventElem = i ? el : el.prototype;
-        var eventCollection = eventElem && eventElem[coll];
-        if (eventCollection) {
-            if (type) {
-                events = (eventCollection[type] || []);
-                if (fn) {
-                    eventCollection[type] = events.filter(function (obj) {
-                        return fn !== obj.fn;
-                    });
-                    removeOneEvent(type, fn);
-                }
-                else {
-                    removeAllEvents(eventCollection);
-                    eventCollection[type] = [];
-                }
+    var owner = typeof el === 'function' && el.prototype || el;
+    if (Object.hasOwnProperty.call(owner, 'hcEvents')) {
+        var events = owner.hcEvents;
+        if (type) {
+            var typeEvents = (events[type] || []);
+            if (fn) {
+                events[type] = typeEvents.filter(function (obj) {
+                    return fn !== obj.fn;
+                });
+                removeOneEvent(type, fn);
             }
             else {
-                removeAllEvents(eventCollection);
-                eventElem[coll] = {};
+                removeAllEvents(events);
+                events[type] = [];
             }
         }
-    });
+        else {
+            removeAllEvents(events);
+            delete owner.hcEvents;
+        }
+    }
 };
 /* eslint-disable valid-jsdoc */
 /**
@@ -1862,7 +1901,7 @@ var fireEvent = H.fireEvent = function (el, type, eventArguments, defaultFunctio
             el.fireEvent(type, e);
         }
     }
-    else {
+    else if (el.hcEvents) {
         if (!eventArguments.target) {
             // We're running a custom event
             extend(eventArguments, {
@@ -1881,28 +1920,36 @@ var fireEvent = H.fireEvent = function (el, type, eventArguments, defaultFunctio
                 type: type
             });
         }
-        var fireInOrder = function (protoEvents, hcEvents) {
-            if (protoEvents === void 0) { protoEvents = []; }
-            if (hcEvents === void 0) { hcEvents = []; }
-            var iA = 0;
-            var iB = 0;
-            var length = protoEvents.length + hcEvents.length;
-            for (i = 0; i < length; i++) {
-                var obj = (!protoEvents[iA] ?
-                    hcEvents[iB++] :
-                    !hcEvents[iB] ?
-                        protoEvents[iA++] :
-                        protoEvents[iA].order <= hcEvents[iB].order ?
-                            protoEvents[iA++] :
-                            hcEvents[iB++]);
-                // If the event handler return false, prevent the default
-                // handler from executing
-                if (obj.fn.call(el, eventArguments) === false) {
-                    eventArguments.preventDefault();
+        var events = [];
+        var object = el;
+        var multilevel = false;
+        // Recurse up the inheritance chain and collect hcEvents set as own
+        // objects on the prototypes.
+        while (object.hcEvents) {
+            if (Object.hasOwnProperty.call(object, 'hcEvents') &&
+                object.hcEvents[type]) {
+                if (events.length) {
+                    multilevel = true;
                 }
+                events.unshift.apply(events, object.hcEvents[type]);
             }
-        };
-        fireInOrder(el.protoEvents && el.protoEvents[type], el.hcEvents && el.hcEvents[type]);
+            object = Object.getPrototypeOf(object);
+        }
+        // For performance reasons, only sort the event handlers in case we are
+        // dealing with multiple levels in the prototype chain. Otherwise, the
+        // events are already sorted in the addEvent function.
+        if (multilevel) {
+            // Order the calls
+            events.sort(function (a, b) { return a.order - b.order; });
+        }
+        // Call the collected event handlers
+        events.forEach(function (obj) {
+            // If the event handler returns false, prevent the default handler
+            // from executing
+            if (obj.fn.call(el, eventArguments) === false) {
+                eventArguments.preventDefault();
+            }
+        });
     }
     // Run the default if not prevented
     if (defaultFunction && !eventArguments.defaultPrevented) {
@@ -2055,6 +2102,7 @@ var utilitiesModule = {
     arrayMin: arrayMin,
     attr: attr,
     clamp: clamp,
+    cleanRecursively: cleanRecursively,
     clearTimeout: internalClearTimeout,
     correctFloat: correctFloat,
     createElement: createElement,

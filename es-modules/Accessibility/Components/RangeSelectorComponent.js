@@ -12,23 +12,24 @@
 'use strict';
 import AccessibilityComponent from '../AccessibilityComponent.js';
 import ChartUtilities from '../Utils/ChartUtilities.js';
-var unhideChartElementFromAT = ChartUtilities.unhideChartElementFromAT;
+var unhideChartElementFromAT = ChartUtilities.unhideChartElementFromAT, getAxisRangeDescription = ChartUtilities.getAxisRangeDescription;
+import Announcer from '../Utils/Announcer.js';
 import H from '../../Core/Globals.js';
 import HTMLUtilities from '../Utils/HTMLUtilities.js';
 var setElAttrs = HTMLUtilities.setElAttrs;
 import KeyboardNavigationHandler from '../KeyboardNavigationHandler.js';
 import U from '../../Core/Utilities.js';
+import RangeSelector from '../../Extensions/RangeSelector.js';
 var extend = U.extend;
 /* eslint-disable no-invalid-this, valid-jsdoc */
 /**
  * @private
  */
 function shouldRunInputNavigation(chart) {
-    var inputVisible = (chart.rangeSelector &&
+    return Boolean(chart.rangeSelector &&
         chart.rangeSelector.inputGroup &&
         chart.rangeSelector.inputGroup.element
-            .getAttribute('visibility') !== 'hidden');
-    return (inputVisible &&
+            .getAttribute('visibility') !== 'hidden' &&
         chart.options.rangeSelector.inputEnabled !== false &&
         chart.rangeSelector.minInput &&
         chart.rangeSelector.maxInput);
@@ -44,21 +45,35 @@ function shouldRunInputNavigation(chart) {
  * @return {boolean}
  */
 H.Chart.prototype.highlightRangeSelectorButton = function (ix) {
-    var buttons = this.rangeSelector.buttons, curSelectedIx = this.highlightedRangeSelectorItemIx;
+    var _a, _b;
+    var buttons = ((_a = this.rangeSelector) === null || _a === void 0 ? void 0 : _a.buttons) || [];
+    var curHighlightedIx = this.highlightedRangeSelectorItemIx;
+    var curSelectedIx = (_b = this.rangeSelector) === null || _b === void 0 ? void 0 : _b.selected;
     // Deselect old
-    if (typeof curSelectedIx !== 'undefined' && buttons[curSelectedIx]) {
-        buttons[curSelectedIx].setState(this.oldRangeSelectorItemState || 0);
+    if (typeof curHighlightedIx !== 'undefined' &&
+        buttons[curHighlightedIx] &&
+        curHighlightedIx !== curSelectedIx) {
+        buttons[curHighlightedIx].setState(this.oldRangeSelectorItemState || 0);
     }
     // Select new
     this.highlightedRangeSelectorItemIx = ix;
     if (buttons[ix]) {
         this.setFocusToElement(buttons[ix].box, buttons[ix].element);
-        this.oldRangeSelectorItemState = buttons[ix].state;
-        buttons[ix].setState(2);
+        if (ix !== curSelectedIx) {
+            this.oldRangeSelectorItemState = buttons[ix].state;
+            buttons[ix].setState(1);
+        }
         return true;
     }
     return false;
 };
+// Range selector does not have destroy-setup for class instance events - so
+// we set it on the class and call the component from here.
+H.addEvent(RangeSelector, 'afterBtnClick', function () {
+    var _a;
+    var component = (_a = this.chart.accessibility) === null || _a === void 0 ? void 0 : _a.components.rangeSelector;
+    return component === null || component === void 0 ? void 0 : component.onAfterBtnClick();
+});
 /**
  * The RangeSelectorComponent class
  *
@@ -70,14 +85,23 @@ var RangeSelectorComponent = function () { };
 RangeSelectorComponent.prototype = new AccessibilityComponent();
 extend(RangeSelectorComponent.prototype, /** @lends Highcharts.RangeSelectorComponent */ {
     /**
+     * Init the component
+     * @private
+     */
+    init: function () {
+        var chart = this.chart;
+        this.announcer = new Announcer(chart, 'polite');
+    },
+    /**
      * Called on first render/updates to the chart, including options changes.
      */
     onChartUpdate: function () {
+        var _a;
         var chart = this.chart, component = this, rangeSelector = chart.rangeSelector;
         if (!rangeSelector) {
             return;
         }
-        if (rangeSelector.buttons && rangeSelector.buttons.length) {
+        if ((_a = rangeSelector.buttons) === null || _a === void 0 ? void 0 : _a.length) {
             rangeSelector.buttons.forEach(function (button) {
                 unhideChartElementFromAT(chart, button.element);
                 component.setRangeButtonAttrs(button);
@@ -100,14 +124,9 @@ extend(RangeSelectorComponent.prototype, /** @lends Highcharts.RangeSelectorComp
      * @param {Highcharts.SVGElement} button
      */
     setRangeButtonAttrs: function (button) {
-        var chart = this.chart, label = chart.langFormat('accessibility.rangeSelector.buttonText', {
-            chart: chart,
-            buttonText: button.text && button.text.textStr
-        });
         setElAttrs(button.element, {
             tabindex: -1,
-            role: 'button',
-            'aria-label': label
+            role: 'button'
         });
     },
     /**
@@ -182,6 +201,19 @@ extend(RangeSelectorComponent.prototype, /** @lends Highcharts.RangeSelectorComp
             this.fakeClickEvent(chart.rangeSelector.buttons[chart.highlightedRangeSelectorItemIx].element);
         }
         return response.success;
+    },
+    /**
+     * Called whenever a range selector button has been clicked, either by
+     * mouse, touch, or kbd/voice/other.
+     * @private
+     */
+    onAfterBtnClick: function () {
+        var chart = this.chart;
+        var axisRangeDescription = getAxisRangeDescription(chart.xAxis[0]);
+        var announcement = chart.langFormat('accessibility.rangeSelector.clickButtonAnnouncement', { chart: chart, axisRangeDescription: axisRangeDescription });
+        if (announcement) {
+            this.announcer.announce(announcement);
+        }
     },
     /**
      * Get navigation for the range selector input boxes.
@@ -261,6 +293,13 @@ extend(RangeSelectorComponent.prototype, /** @lends Highcharts.RangeSelectorComp
             this.getRangeSelectorButtonNavigation(),
             this.getRangeSelectorInputNavigation()
         ];
+    },
+    /**
+     * Remove component traces
+     */
+    destroy: function () {
+        var _a;
+        (_a = this.announcer) === null || _a === void 0 ? void 0 : _a.destroy();
     }
 });
 export default RangeSelectorComponent;
